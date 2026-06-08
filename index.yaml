@@ -1,0 +1,14 @@
+apiVersion: v1
+entries:
+  docux:
+  - apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-06-08T14:22:28.869351+09:00"
+    description: DocuX 통합 지식 관리 시스템 — API·프론트엔드·LLM(GPU)·데이터스토어 엄브렐러 차트
+    digest: 48d56e7f52faef5ea76160a7fdf0156890892ecc335f97522c4775d112b6faa3
+    name: docux
+    type: application
+    urls:
+    - https://<<helm-repo-url>>/docux-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-06-08T14:22:28.868856+09:00"
