@@ -1,0 +1,67 @@
+# Neo4j — GraphDB. neo4j.enabled로 토글.
+{{- if .Values.neo4j.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "neo4j") | nindent 4 }}
+spec:
+  serviceName: neo4j
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docux.selectorLabels" (dict "root" . "component" "neo4j") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docux.labels" (dict "root" . "component" "neo4j") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: neo4j
+          image: {{ include "docux.image" .Values.neo4j.image | quote }}
+          ports:
+            - { containerPort: 7474, name: http }
+            - { containerPort: 7687, name: bolt }
+          env:
+            # NEO4J_PASSWORD 먼저 정의(아래 $(NEO4J_PASSWORD) 확장은 선행 변수만 참조 가능).
+            - name: NEO4J_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.secret.existingSecret }}, key: NEO4J_PASSWORD } }
+            - name: NEO4J_AUTH
+              value: "{{ .Values.config.NEO4J_USER }}/$(NEO4J_PASSWORD)"
+            - { name: NEO4J_server_memory_heap_max__size, value: "1G" }
+            - { name: NEO4J_server_memory_pagecache_size, value: "512m" }
+          readinessProbe:
+            tcpSocket: { port: 7687 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            {{- toYaml .Values.neo4j.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: {{ .Values.neo4j.storage.size }} } }
+        {{- with .Values.neo4j.storage.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "neo4j") | nindent 4 }}
+spec:
+  selector:
+    {{- include "docux.selectorLabels" (dict "root" . "component" "neo4j") | nindent 4 }}
+  ports:
+    - { name: http, port: 7474, targetPort: 7474 }
+    - { name: bolt, port: 7687, targetPort: 7687 }
+{{- end }}

@@ -1,0 +1,140 @@
+# 백엔드 API — PVC(data·hfcache) + 마이그레이션 Job + Deployment + Service.
+{{- $img := include "docux.image" .Values.api.image }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docux-data
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.api.persistence.data.accessMode | quote }}]
+  resources:
+    requests:
+      storage: {{ .Values.api.persistence.data.size }}
+  {{- with .Values.api.persistence.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docux-hfcache
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.api.persistence.hfcache.accessMode | quote }}]
+  resources:
+    requests:
+      storage: {{ .Values.api.persistence.hfcache.size }}
+  {{- with .Values.api.persistence.hfcache.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- if .Values.api.migrate.enabled }}
+---
+# DB 마이그레이션 Job(alembic upgrade head) — Helm pre-install/pre-upgrade hook으로
+# API 기동 전에 실행한다. 릴리스 ConfigMap이 아직 없을 수 있으므로 의존하지 않고,
+# Settings 인스턴스화에 필요한 최소 env만 직접 주입한다(시크릿 ref + 비민감 리터럴).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: docux-migrate
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "migrate") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "docux.selectorLabels" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          # Settings()는 database_url + neo4j_* 4개를 요구한다(없으면 검증 실패).
+          # alembic은 DATABASE_URL만 쓰지만 import 시 Settings 전체가 로드되므로 함께 준다.
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: {{ .Values.secret.existingSecret }}, key: DATABASE_URL } }
+            - name: NEO4J_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.secret.existingSecret }}, key: NEO4J_PASSWORD } }
+            - name: NEO4J_URI
+              value: {{ .Values.config.NEO4J_URI | quote }}
+            - name: NEO4J_USER
+              value: {{ .Values.config.NEO4J_USER | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docux-api
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "docux.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docux.labels" (dict "root" . "component" "api") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:    { name: {{ .Values.secret.existingSecret }} }
+            - configMapRef: { name: docux-config }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 40
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          volumeMounts:
+            - { name: data,    mountPath: /app/data }
+            - { name: hfcache, mountPath: /home/app/.cache/huggingface }
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: docux-data }
+        - name: hfcache
+          persistentVolumeClaim: { claimName: docux-hfcache }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docux-api
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  selector:
+    {{- include "docux.selectorLabels" (dict "root" . "component" "api") | nindent 4 }}
+  ports:
+    - port: 8000
+      targetPort: 8000

@@ -1,0 +1,104 @@
+# LLM 추론 서버(llama.cpp CUDA, GPU 노드) — PVC + Deployment + Service. llm.enabled로 토글.
+{{- if .Values.llm.enabled }}
+{{- $img := include "docux.image" .Values.llm.image }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docux-llm-models
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "llm") | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.llm.persistence.accessMode | quote }}]
+  resources:
+    requests:
+      storage: {{ .Values.llm.persistence.size }}
+  {{- with .Values.llm.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docux-llm
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "llm") | nindent 4 }}
+spec:
+  replicas: {{ .Values.llm.replicas }}
+  selector:
+    matchLabels:
+      {{- include "docux.selectorLabels" (dict "root" . "component" "llm") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docux.labels" (dict "root" . "component" "llm") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.llm.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.llm.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.llm.model.fetchUrl }}
+      initContainers:
+        - name: fetch-model
+          image: curlimages/curl:8.11.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              if [ ! -f {{ .Values.llm.model.path }} ]; then
+                curl -fSL "{{ .Values.llm.model.fetchUrl }}" -o {{ .Values.llm.model.path }}
+              fi
+          volumeMounts:
+            - { name: models, mountPath: /models }
+      {{- end }}
+      containers:
+        - name: llm
+          image: {{ $img | quote }}
+          imagePullPolicy: {{ .Values.llm.image.pullPolicy }}
+          ports:
+            - containerPort: 8001
+          env:
+            - { name: MODEL_PATH,         value: {{ .Values.llm.model.path | quote }} }
+            - { name: MODEL_ALIAS,        value: {{ .Values.llm.model.alias | quote }} }
+            - { name: LLAMA_N_GPU_LAYERS, value: {{ .Values.llm.nGpuLayers | quote }} }
+            - { name: LLAMA_CTX_SIZE,     value: {{ .Values.llm.ctxSize | quote }} }
+          resources:
+            requests:
+              {{- toYaml .Values.llm.resources.requests | nindent 14 }}
+            limits:
+              nvidia.com/gpu: {{ .Values.llm.gpu }}
+              {{- toYaml .Values.llm.resources.limits | nindent 14 }}
+          readinessProbe:
+            httpGet: { path: /health, port: 8001 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8001 }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          volumeMounts:
+            - { name: models, mountPath: /models, readOnly: true }
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: docux-llm-models }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-svc
+  labels:
+    {{- include "docux.labels" (dict "root" . "component" "llm") | nindent 4 }}
+spec:
+  selector:
+    {{- include "docux.selectorLabels" (dict "root" . "component" "llm") | nindent 4 }}
+  ports:
+    - port: 8001
+      targetPort: 8001
+{{- end }}

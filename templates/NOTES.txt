@@ -1,0 +1,31 @@
+DocuX 배포 완료 — release {{ .Release.Name }} (namespace {{ .Release.Namespace }}).
+
+상태 확인:
+  kubectl -n {{ .Release.Namespace }} get pods,svc
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/docux-api
+
+접속:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.host }}/   (Ingress)
+{{- else }}
+  포트포워드: kubectl -n {{ .Release.Namespace }} port-forward svc/docux-frontend 8080:8080
+  → http://localhost:8080
+{{- end }}
+
+마스터 로그인(기동 시 시드): platform.master@makinarocks.ai — 운영 전 비밀번호 변경 필수.
+
+전제(미충족 시 파드가 안 뜸):
+  1) Secret '{{ .Values.secret.existingSecret }}' 가 존재해야 한다(키: JWT_SECRET,
+     DATABASE_URL, NEO4J_PASSWORD, POSTGRES_PASSWORD). 없으면 먼저 생성:
+       kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.secret.existingSecret }} \
+         --from-literal=JWT_SECRET="$(openssl rand -base64 48)" \
+         --from-literal=DATABASE_URL="postgresql+psycopg://docux:<PW>@postgres:5432/docux" \
+         --from-literal=NEO4J_PASSWORD="<PW>" --from-literal=POSTGRES_PASSWORD="<PW>"
+  2) 이미지 repository(values.*.image.repository)를 사내 레지스트리 경로로 설정.
+{{- if .Values.llm.enabled }}
+  3) GPU 노드: llm.nodeSelector/tolerations를 사내 GPU 노드에 맞추고, 모델 GGUF를
+     PVC(docux-llm-models)에 둔다(llm.model.fetchUrl로 자동 다운로드 가능).
+{{- end }}
+{{- if .Values.opensearch.enabled }}
+  4) OpenSearch 이미지는 Dockerfile.opensearch(analysis-nori) 빌드본이어야 한다.
+{{- end }}

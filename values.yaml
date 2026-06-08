@@ -3,9 +3,12 @@
 #   harbor.corp.local/docux/docux-api
 
 global:
-  # 모든 파드에 적용할 imagePullSecrets(사설 레지스트리).
-  imagePullSecrets: []
-    # - name: regcred
+  # 레지스트리(ghcr.io) 인증. 아래 secret을 먼저 생성해야 이미지 pull 가능:
+  #   kubectl -n docux create secret docker-registry ghcr-cred \
+  #     --docker-server=ghcr.io \
+  #     --docker-username=<GH_USER> --docker-password=<GH_PAT>
+  imagePullSecrets:
+    - name: ghcr-cred
 
 # ── 시크릿: 외부에서 생성한 Secret을 참조(권장). 키: JWT_SECRET, DATABASE_URL,
 #    NEO4J_PASSWORD, POSTGRES_PASSWORD. (deploy/README.md의 kubectl create secret 참고)
@@ -31,8 +34,8 @@ config:
 # ── 백엔드 API ──
 api:
   image:
-    repository: docux-api
-    tag: latest
+    repository: ghcr.io/kwang-min-n/kms-helm-repo/docux-backend
+    tag: v1.0.0
     pullPolicy: IfNotPresent
   replicas: 1
   # DB 마이그레이션 Job(alembic upgrade head) — API 기동 전 1회.
@@ -56,8 +59,8 @@ api:
 # ── 프론트엔드(nginx 정적 SPA) ──
 frontend:
   image:
-    repository: docux-frontend
-    tag: latest
+    repository: ghcr.io/kwang-min-n/kms-helm-repo/docux-frontend
+    tag: v1.0.0
     pullPolicy: IfNotPresent
   replicas: 2
   # nginx가 /v1 프록시할 백엔드(클러스터 내부 API 서비스).
@@ -70,8 +73,8 @@ frontend:
 llm:
   enabled: true
   image:
-    repository: docux-llm
-    tag: latest
+    repository: ghcr.io/kwang-min-n/kms-helm-repo/docux-llm
+    tag: v1.0.0
     pullPolicy: IfNotPresent
   replicas: 1
   gpu: 1                       # nvidia.com/gpu 요청 수 → GPU 노드 스케줄
@@ -115,8 +118,8 @@ neo4j:
 
 opensearch:
   enabled: true
-  # ⚠ Dockerfile.opensearch(analysis-nori 포함) 빌드본의 전체 경로로 교체.
-  image: { repository: docux-opensearch, tag: "2.19.0" }
+  # Dockerfile.opensearch(analysis-nori 포함) 빌드본.
+  image: { repository: ghcr.io/kwang-min-n/kms-helm-repo/docux-opensearch, tag: "v1.0.0" }
   storage: { size: 20Gi, storageClass: "" }
   javaOpts: "-Xms1g -Xmx1g"
   # 노드 sysctl(vm.max_map_count) 미설정 시 privileged initContainer로 올린다.
